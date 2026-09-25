@@ -1,23 +1,24 @@
 # Hermes Cursor Adapter: Design
 
 **Date:** 2026-09-25
-**Status:** Approved in conversation, awaiting written-spec review
+**Status:** Revised after independent review, awaiting written-spec review
 **Repository:** `sorcush/cursor2openai` (fork of `alfons-fhl/Cursor-Plan2API`)
 
 ## 1. Goal
 
 Turn this repository into a small, secure adapter that lets Hermes Agent use a Cursor subscription as a custom model provider.
 
-Hermes must behave on the Cursor provider the same way it behaves on the OpenAI provider. That includes tool calls, streaming, screenshots, and multi-step tasks.
+Hermes must behave on the Cursor provider the same way it behaves on the OpenAI provider for tool calls, streaming, screenshots, and multi-step tasks. The adapter must work for every Hermes task that a profile assigns to it: the main conversation, subagents (delegation), compression, title generation, and other auxiliary tasks.
 
 ### Success criteria
 
-- Hermes can be configured with the adapter as a named custom provider using the `chat_completions` transport.
-- Hermes completes multi-step tool tasks with Cursor models. Hermes runs every tool. Cursor never runs Hermes tools or changes the machine.
-- Streaming works, including streamed tool calls and token usage.
+- Hermes can use the adapter as a named custom provider with the `chat_completions` transport, for any task in a profile.
+- Hermes completes multi-step tool tasks with Cursor models. Every Hermes tool is run by Hermes, never by the adapter or Cursor.
+- Streaming and non-streaming responses both work, including tool calls.
 - Screenshots sent by Hermes reach the model.
-- Continuing a Hermes conversation sends only new messages to Cursor on most steps, including after the adapter restarts and after several days.
-- All security issues found in the review of the original repository are fixed. `npm audit` reports zero vulnerabilities.
+- A model is selected by its exact Cursor name, which includes the effort level.
+- On most steps of a continued Hermes conversation, the adapter sends only the new messages to Cursor. This also holds after the adapter restarts and after several days.
+- The security checks in section 11 pass. `npm audit` reports zero vulnerabilities.
 
 ### Constraints
 
@@ -26,6 +27,11 @@ Hermes must behave on the Cursor provider the same way it behaves on the OpenAI 
 - Started manually. Keeping it running is out of scope.
 - Uses only documented Cursor CLI (`agent`) behavior.
 - Personal use. One user, one Cursor login.
+
+### Known limitations accepted for version 1
+
+- **Reasoning text is not available.** Cursor suppresses thinking output in print mode for every output format ([Cursor output format](https://cursor.com/docs/cli/reference/output-format)). Hermes will not show the model's reasoning for this provider. The selected effort level still applies, because it is part of the model name.
+- **Cursor's built-in read-only tools are not locked down.** See section 12.
 
 ## 2. Scope
 
@@ -38,23 +44,23 @@ Hermes must behave on the Cursor provider the same way it behaves on the OpenAI 
 
 Everything else in the repository is deleted:
 
-- Anthropic Messages (`/v1/messages`), Responses API (`/v1/responses`)
+- Anthropic Messages (`/v1/messages`) and Responses API (`/v1/responses`)
 - Embeddings (`/v1/embeddings`) and the `@xenova/transformers` dependency
 - Image generation (`/v1/images/generations`)
 - Usage API (`/v1/usage`), macOS Keychain access, Dashboard API key bridge, cost estimates
-- Admin page, request log stream, playground, OpenAPI endpoints
-- Health endpoint details (see section 9 for the replacement startup checks)
+- Health endpoint, admin page, request log stream, playground, OpenAPI endpoints
 - Docker files, launchd and systemd templates, background daemon commands
 - Agent pool, startup warm-up request, profile rotation
 - Delegate mode, agent mode, plan mode and plan fast path, OpenCode prompts
-- Adapter-side context compression, compact tool schemas, auto-continue, tool argument "fixer", JSON mode
-- Built-in model catalog and extra models; outbound HTTP proxy support
+- Adapter-side context compression, compact tool schemas, auto-continue, and the tool argument "fixer"
+- Built-in model catalog, extra models, and model-name prefix removal
+- Outbound HTTP proxy support
 - SQLite session persistence and the existing session store
-- The existing ad hoc test scripts, replaced by the tests in section 11
+- The existing ad hoc test scripts, replaced by the tests in section 13
 
 ### Renaming
 
-The package, binary, and environment variable prefix are renamed to match the fork: package `cursor2openai`, binary `cursor2openai`, variables `CURSOR2OPENAI_*`.
+The package, command, and environment variable prefix are renamed to match the fork: package `cursor2openai`, command `cursor2openai`, variables `CURSOR2OPENAI_*`.
 
 ## 3. Approach
 
@@ -62,10 +68,12 @@ Each Hermes request starts a short-lived `agent` process in print mode. The adap
 
 No `agent` process stays running between requests. A Cursor session is saved data plus an ID. The Cursor CLI stores sessions on local disk, grouped by workspace folder (`~/.cursor/chats/<workspace id>/<session id>`). For that reason the adapter always uses the same workspace folder.
 
+The benefit claimed for this approach is smaller prompts on continued steps, measured as characters sent to Cursor. End-to-end speed of Cursor's responses is not measured and not claimed.
+
 Rejected alternatives:
 
-- **Trim and harden only.** Re-sends the whole conversation on every step. Simpler, but long tasks stay slow.
-- **One long-running `agent acp` process.** Might be faster and support native tool calls, but depends on unproven behavior (pausing on a tool call while Hermes runs it). Can be explored later as a separate experiment.
+- **Trim and harden only.** Re-sends the whole conversation on every step.
+- **One long-running `agent acp` process.** Depends on unproven behavior (pausing on a tool call while Hermes runs it). Can be explored later as a separate experiment.
 
 ## 4. Components
 
@@ -75,18 +83,19 @@ Each file has one job. File names use kebab-case.
 |---|---|
 | `src/cli.ts` | Entry point. Loads configuration, runs startup checks, starts the server, handles shutdown. |
 | `src/config.ts` | Loads and validates configuration from environment variables and an optional config file. |
-| `src/server.ts` | HTTP or HTTPS server. Routes the two endpoints. Enforces API key, content type, and size limit. |
-| `src/log.ts` | Writes one metadata line per request. Never writes prompts, images, or keys. |
-| `src/conversation/fingerprint.ts` | Cleans up messages and computes fingerprints. |
-| `src/conversation/conversation-index.ts` | Maps fingerprints to Cursor session IDs. One-time use, expiry, size cap, saved to disk. |
-| `src/prompt/prompt-builder.ts` | Builds the full prompt or the continued prompt. |
-| `src/prompt/tool-protocol.ts` | Tool instructions for the model, and the parser for tool-call markers. |
+| `src/server.ts` | HTTP or HTTPS server. Routes the two endpoints. Enforces API key, content type, size limit, server timeouts, and the request queue. |
+| `src/log.ts` | Writes one metadata line per request. Never writes prompts, images, keys, or raw `agent` output unless debug logging is enabled. |
+| `src/conversation/fingerprint.ts` | Builds the canonical form of messages and computes conversation keys. |
+| `src/conversation/conversation-index.ts` | Maps conversation keys to Cursor session IDs and tool markers. One-time use, expiry, size cap, saved to disk. |
+| `src/prompt/prompt-builder.ts` | Builds the full prompt or the continued prompt, including JSON response instructions. |
+| `src/prompt/tool-protocol.ts` | Generates tool markers, writes tool instructions for the model, and parses tool-call blocks. |
 | `src/prompt/stream-splitter.ts` | Splits streamed model output into text to send now, text to hold back, and tool-call blocks. |
 | `src/images/attachments.ts` | Validates embedded images, saves them for one request, deletes them afterward. |
-| `src/cursor/agent-runner.ts` | Starts `agent` with fixed flags and a minimal environment, parses its stream output, stops it on disconnect or timeout. |
+| `src/cursor/agent-runner.ts` | Starts `agent` with fixed flags and a minimal environment, parses and de-duplicates its stream output, stops it on disconnect or timeout. |
 | `src/cursor/error-classifier.ts` | Maps `agent` failures to OpenAI-style errors. |
 | `src/cursor/model-list.ts` | Fetches and caches the list of models available to the Cursor login. |
 | `src/openai/types.ts` | Request and response types for the Chat Completions format. |
+| `src/openai/request-contract.ts` | Validates request fields and applies the rules in section 7. |
 | `src/openai/response-writer.ts` | Writes non-streamed responses and streamed chunks in OpenAI format. |
 | `src/openai/chat-completions.ts` | The request handler that connects the parts above. |
 
@@ -99,151 +108,202 @@ Environment variables override the optional file `<data folder>/config.yaml`. Re
 | Variable | Default | Meaning |
 |---|---|---|
 | `CURSOR2OPENAI_API_KEY` | none, required | Key Hermes must send. At least 32 characters. |
-| `CURSOR2OPENAI_HOST` | `127.0.0.1` | Listening address. Set to `0.0.0.0` or a LAN address to accept network connections. |
+| `CURSOR2OPENAI_HOST` | `127.0.0.1` | Listening address. |
 | `CURSOR2OPENAI_PORT` | `8787` | Listening port. |
-| `CURSOR2OPENAI_DATA_DIR` | `~/.cursor2openai` | Holds the workspace folder, the fingerprint file, the model cache, and the optional config file. |
-| `CURSOR2OPENAI_DEFAULT_MODEL` | `composer-2.5` | Used when a request names no model. |
-| `CURSOR2OPENAI_AGENT_BIN` | `agent` | Path to the Cursor CLI. |
-| `CURSOR2OPENAI_REQUEST_TIMEOUT_MS` | `600000` | Time limit per request (10 minutes). |
-| `CURSOR2OPENAI_MAX_CONCURRENT` | `4` | Maximum `agent` processes at once. Extra requests wait. |
-| `CURSOR2OPENAI_CONVERSATION_TTL_DAYS` | `30` | Unused fingerprints expire after this many days. |
-| `CURSOR2OPENAI_MAX_CONVERSATIONS` | `10000` | Maximum stored fingerprints. Least recently used are removed first. |
-| `CURSOR2OPENAI_MODEL_CACHE_MS` | `300000` | How long the model list is cached (5 minutes). |
-| `CURSOR2OPENAI_MAX_BODY_BYTES` | `20971520` | Request size limit (20 MB). |
 | `CURSOR2OPENAI_TLS_CERT_FILE` | none | Certificate file. With the key file, enables HTTPS. |
 | `CURSOR2OPENAI_TLS_KEY_FILE` | none | Private key file for HTTPS. |
+| `CURSOR2OPENAI_ALLOW_INSECURE_HTTP` | `false` | Must be `true` to listen on a non-loopback address without HTTPS. |
+| `CURSOR2OPENAI_DATA_DIR` | `~/.cursor2openai` | Holds the workspace folder, conversation index, model cache, and optional config file. Created with mode `0700`. |
+| `CURSOR2OPENAI_DEFAULT_MODEL` | `composer-2.5` | Used when a request names no model. |
+| `CURSOR2OPENAI_AGENT_BIN` | `agent` | Path to the Cursor CLI. |
+| `CURSOR2OPENAI_REQUEST_TIMEOUT_MS` | `600000` | Time limit for one `agent` run (10 minutes). |
+| `CURSOR2OPENAI_MAX_CONCURRENT` | `4` | Maximum `agent` processes at once. |
+| `CURSOR2OPENAI_MAX_QUEUED` | `16` | Maximum requests waiting for a free slot. |
+| `CURSOR2OPENAI_QUEUE_TIMEOUT_MS` | `60000` | Maximum time a request waits for a free slot. |
+| `CURSOR2OPENAI_CONVERSATION_TTL_DAYS` | `30` | Unused conversation entries expire after this many days. |
+| `CURSOR2OPENAI_MAX_CONVERSATIONS` | `10000` | Maximum stored entries. Least recently used are removed first. |
+| `CURSOR2OPENAI_MODEL_CACHE_MS` | `300000` | How long the model list is cached (5 minutes). |
+| `CURSOR2OPENAI_MAX_BODY_BYTES` | `20971520` | Request size limit (20 MB). |
+| `CURSOR2OPENAI_DEBUG_LOG_AGENT_OUTPUT` | `false` | When `true`, logs `agent` error output for local troubleshooting. It may contain prompt text. |
 
 `CURSOR_API_KEY` is passed through to `agent` if it is set. Otherwise `agent` uses its own saved login.
 
+Loopback addresses are `127.0.0.1`, `::1`, and `localhost`. Any other address counts as non-loopback.
+
 ## 6. Request flow
 
-1. **Check.** Verify the API key, content type, and size. Parse the body. Verify the model is in the model list (section 9). Reject anything invalid (section 10).
-2. **Fingerprint.** Find the last assistant message. Compute the fingerprint of all messages up to and including it, together with the model name and the tool list.
-3. **Look up.** Take the matching session ID out of the conversation index. Taking it removes it, so each fingerprint is used at most once.
-4. **Run.**
-   - **Match found:** run `agent --resume <session ID>` with the continued prompt (section 7).
-   - **No match, or no assistant message yet:** run `agent` without `--resume` with the full prompt.
-   - **Resume failed before any text was sent to Hermes:** retry once without `--resume` with the full prompt. This applies only to failures classified as `upstream_error` (section 10). Rate limits, usage limits, context length, login, and timeout errors are returned to Hermes without a retry.
-5. **Respond.** Stream or return the answer (section 8).
-6. **Record.** On success, compute the fingerprint of the request's messages plus the assistant reply exactly as it was returned to Hermes. Store it with the session ID Cursor reported.
+1. **Admit.** Verify the API key, content type, and size. If all `agent` slots are busy, wait in the queue. Reject with 503 if the queue is full or the wait exceeds the queue timeout.
+2. **Validate.** Parse the body and apply the request rules (section 7). Verify the model is in the model list (section 10).
+3. **Key.** Find the last assistant message. Compute the conversation key of all messages up to and including it (see "Conversation key" below).
+4. **Look up.** Remove the matching entry from the conversation index. The removal is written to disk before `agent` starts, so each entry is used at most once, even across a crash.
+5. **Run.**
+   - **Entry found:** run `agent --resume <session ID>` with the continued prompt (section 8), using the tool marker stored in the entry.
+   - **No entry, or no assistant message yet:** run `agent` without `--resume` with the full prompt and a new tool marker.
+   - **Resume failed before any text was sent to Hermes:** retry once without `--resume` with the full prompt and a new tool marker. This applies only to failures classified as `upstream_error` (section 11). Other errors are returned to Hermes without a retry.
+6. **Respond.** Stream or return the answer (section 9).
+7. **Record.** On success, compute the conversation key of the request's messages plus the assistant reply exactly as it was returned to Hermes. Store the key with the session ID Cursor reported and the tool marker. Additions are written to disk in batches, at most once per second, and always at shutdown.
 
 On failure, disconnect, or timeout, nothing is recorded. The next request starts fresh, because the saved Cursor session may contain a partial turn.
 
-### Fingerprint rules
+### Conversation key
 
-The fingerprint is the SHA-256 hash of a canonical JSON document (keys sorted, no extra spaces) containing:
+The key is the SHA-256 hash of a canonical JSON document (keys sorted, no extra spaces) containing:
 
+- `affinity`: the value of the `X-Cursor2openai-Conversation` request header, or an empty string if the header is absent. Hermes sends this header when the provider sets `session_affinity_header` (section 14). It separates two Hermes conversations whose messages happen to be identical, and it separates each conversation from auxiliary requests.
 - `model`: the model name.
-- `tools`: the request's tool definitions, sorted by function name.
-- `messages`: each message cleaned up as follows.
+- `tools`: the request's tool definitions, in the order sent.
+- `messages`: each message in canonical form.
 
-| Role | Cleaned-up form |
+Canonical form of a message:
+
+| Field | Rule |
 |---|---|
-| `system`, `developer` | role `system`, text |
-| `user` | text parts joined with newlines, trimmed; each image replaced by the SHA-256 hash of its data |
-| `assistant` | text trimmed (`null` becomes empty); tool calls as a list of name plus arguments, with arguments parsed and re-serialized canonically. Tool-call IDs and reasoning fields are excluded. |
-| `tool` | text, trimmed. The tool-call ID is excluded. |
+| `role` | Kept exactly. `system` and `developer` stay distinct. |
+| `content` | Kept exactly. A string stays a string. A list of parts keeps its order and part types. Text is not trimmed. Each image part is replaced by `{"type": "image_url", "sha256": <hash of the data address>}`. `null` stays `null`. |
+| `tool_calls` | Kept in order, with `id`, `type`, `function.name`, and `function.arguments` exactly as strings. |
+| `tool_call_id` | Kept exactly. |
+| Anything else | Removed. This includes `name` (Hermes removes it from tool messages), `reasoning`, `reasoning_content`, and `reasoning_details`. |
 
-This works because Hermes re-sends earlier messages byte-for-byte identical on every step. It builds its system prompt once per conversation and rebuilds it only after compressing the conversation (Hermes source: `agent/turn_context.py`, "prompt-cache invariant").
+This works because Hermes re-sends earlier messages byte-for-byte identical on every step, using the `api_content` sidecar, and rebuilds its system prompt only after compressing the conversation (Hermes source: `agent/turn_context.py`, "prompt-cache invariant").
+
+A conversation that compresses its history, edits a message, changes model, or changes its tool list produces a different key, and correctly starts a fresh Cursor session.
 
 ### Conversation index
 
-- Each entry holds a session ID and a last-used time.
+- Each entry holds a session ID, a tool marker, and a last-used time.
 - Entries unused for longer than the expiry (default 30 days) are removed when the index loads and once per hour.
 - At most `MAX_CONVERSATIONS` entries are kept. The least recently used are removed first.
-- The index is saved to `<data folder>/conversations.json`. It is written to a temporary file and then renamed, so a crash never leaves a half-written file. Writes are grouped and happen at most once per second, and always at shutdown.
+- The index is saved to `<data folder>/conversations.json` with mode `0600`. Every write goes to a temporary file that is then renamed, so a crash never leaves a half-written file.
 - If the file is missing or unreadable at startup, the adapter starts with an empty index and logs a warning.
 
-## 7. Prompts
+## 7. Request rules
+
+| Field | Rule |
+|---|---|
+| `model` | Honored. Must be an exact name from the model list. Missing means the default model. |
+| `messages` | Honored. Must be a non-empty list. Roles `system`, `developer`, `user`, `assistant`, `tool`. |
+| `stream` | Honored. |
+| `stream_options.include_usage` | Honored when Cursor reports usage (section 9). |
+| `tools` | Honored. Function tools only. Other tool types are rejected with 400. |
+| `tool_choice` | `auto` or missing: normal. `none`: tools are not described to the model. `required`: the model is told it must request at least one tool. A named function: the model is told to request that function. The last two are instructions, not guarantees. |
+| `parallel_tool_calls` | `false`: the model is told to request at most one tool, and only the first returned call is kept. Otherwise several calls are allowed. |
+| `response_format` | `json_object` or `json_schema`: the model is told to answer only with JSON, matching the schema when one is given. Code fences around the reply are removed. The reply is not validated. `text` or missing: normal. |
+| `n` | Must be 1 or missing. Anything else is rejected with 400. |
+| `reasoning_effort`, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `user`, `metadata` | Accepted and ignored. The Cursor CLI has no options for them. Effort comes from the model name. |
+| Any other field | Accepted and ignored. |
+
+## 8. Prompts
 
 ### Full prompt
 
 Sent for a new Cursor session. Contains, in order:
 
-1. The tool protocol instructions (section 8), including the full tool list: each tool's name, description, and parameter schema.
-2. Hermes's system messages.
-3. The conversation, one block per message, labeled `User:`, `Assistant:`, `Assistant tool calls:`, or `Tool result (<tool name>):`.
-4. Image references for every image still in the conversation (section 9).
+1. The tool protocol instructions with this session's tool marker, and the full tool list: each tool's name, description, and parameter schema. Omitted when there are no tools or `tool_choice` is `none`.
+2. JSON response instructions, when `response_format` asks for JSON.
+3. Hermes's system and developer messages.
+4. The conversation, one block per message, labeled `User:`, `Assistant:`, `Assistant tool calls:`, or `Tool result (<tool name>, id <tool_call_id>):`. The tool name is found from the earlier assistant tool call with the same ID. A tool result with no matching call is labeled `Tool result (unknown tool, id <tool_call_id>):`.
+5. Image references for every image still in the conversation (section 10).
 
 ### Continued prompt
 
 Sent with `--resume`. Contains:
 
-1. The messages after the last assistant message, usually tool results or a new user message, in the same labeled format.
+1. The messages after the last assistant message, in the same labeled format.
 2. Image references for images in those messages only.
-3. A one-line reminder of the tool-call format. The full tool list is not repeated.
+3. A one-line reminder of the tool-call format with this session's marker, when tools are present. The full tool list is not repeated.
+4. JSON response instructions, when `response_format` asks for JSON.
 
-The prompt is always sent through standard input, never as a command-line argument, so it does not appear in process listings.
+The prompt is always sent through standard input, never as a command-line argument.
 
-## 8. Tool calls and streaming
+## 9. Tool calls and streaming
 
 ### Tool protocol
 
-In ask mode, Cursor cannot call Hermes tools directly. The prompt tells the model to request tools in this exact format:
+In ask mode, Cursor cannot call Hermes tools directly. The prompt tells the model to request tools in a block between two marker lines. Each Cursor session gets its own random marker, for example `TOOL_CALLS_7f3a9c2e`, stored in the conversation index so continued prompts use the same one:
 
 ```text
-<tool_calls>
+<TOOL_CALLS_7f3a9c2e>
 [{"name": "read_file", "arguments": {"path": "notes.md"}}]
-</tool_calls>
+</TOOL_CALLS_7f3a9c2e>
 ```
 
 Rules given to the model:
 
+- Each marker must be on its own line.
 - Normal text may come before the opening marker.
 - Several tools may be requested in one block.
 - Stop writing after the closing marker.
 - Use only tools from the provided list.
+
+A random marker cannot appear by accident when the model discusses tool calls or writes code.
+
+### Parsing a block
+
+- A block starts at a line that is exactly the opening marker.
+- It ends at the first line that is exactly the closing marker and after which the collected content parses as a JSON array. A closing marker inside a JSON string does not end the block early.
+- If no valid closing point is found by the end of the output, or the collected block exceeds 1 MB, the whole reply is returned as plain text with finish reason `stop`, and a warning is logged.
+- If the output contains several blocks, their calls are combined in order.
+- Text after the last closing marker is dropped. Its length is logged.
 
 ### Converting to OpenAI format
 
 - Each tool call gets a new unique ID (`call_` plus 24 random characters). IDs written by the model are ignored.
 - `arguments` written as an object is converted to a JSON string. No other changes are made.
 - Tool calls with unknown names or invalid arguments are passed through. Hermes rejects them and reports the problem to the model, as it does with OpenAI.
-- If the block between the markers is not a valid JSON array of objects, the whole reply is returned as plain text with finish reason `stop`, and a warning is logged.
-- Text after the closing marker is dropped. Its length is logged.
 - Finish reason is `tool_calls` when tool calls are returned, otherwise `stop`.
-- Events from Cursor's own internal tools, such as reading an image file, are never forwarded.
+- Events from Cursor's own tools are never forwarded.
 
-### Streaming
+### Reading Cursor's stream
 
-- Text is forwarded to Hermes as `delta.content` as soon as Cursor produces it.
-- The stream splitter holds back only the end of the text that could be the start of `<tool_calls>`. For example, a trailing `<to` is held until the next piece of output shows whether it is the marker. Held text is sent as soon as it cannot be the marker, or when the stream ends.
-- After the opening marker, output is collected until the closing marker or the end of the stream. The block is then parsed and sent as `delta.tool_calls` chunks, one per call, with the full arguments in a single chunk.
-- Thinking text from Cursor is forwarded as `delta.reasoning_content`.
-- The final chunk carries the finish reason. If the request asked for `stream_options.include_usage`, a usage chunk follows. The stream ends with `data: [DONE]`.
+With `--stream-partial-output`, Cursor emits three kinds of `assistant` events ([Cursor output format](https://cursor.com/docs/cli/reference/output-format)). The runner keeps only the first kind:
+
+| `timestamp_ms` | `model_call_id` | Meaning | Action |
+|---|---|---|---|
+| Present | Absent | New text | Use |
+| Present | Present | Duplicate flush before a tool call | Skip |
+| Absent | Absent | Duplicate flush at end of turn | Skip |
+
+The session ID comes from the `system` init event or the terminal `result` event.
+
+### Streaming to Hermes
+
+- Text is forwarded as `delta.content` as soon as it arrives, except for text the splitter holds back.
+- The splitter holds back a line only while it could still become the opening marker. It sends the held text as soon as it cannot, or when the stream ends.
+- After the opening marker, output is collected until the block ends (see "Parsing a block"). The calls are then sent as `delta.tool_calls` chunks, one per call, each with a stable `index`, the final `id`, the function name, and the full arguments.
+- The final chunk carries the finish reason. If usage was requested and is available, a separate chunk follows with `choices: []` and the `usage` object. The stream ends with `data: [DONE]`.
 - Non-streamed requests use the same splitter and return one complete response.
 
 ### Token usage
 
-Hermes uses reported token counts to track how full the context is and when to compress it. So `prompt_tokens` must describe the whole conversation, even when only new messages were sent.
+Hermes treats reported usage as authoritative for tracking how full the context is. The documented `result` event contains no usage fields. So:
 
-- If Cursor's usage for a continued session covers the whole conversation, it is used as reported.
-- Otherwise `prompt_tokens` is estimated as the character count of the full prompt divided by 4. The full prompt is the one that would have been sent for a new session.
-- `completion_tokens` comes from Cursor when available, otherwise it is estimated the same way from the reply.
+- If Cursor reports usage and, for continued sessions, the usage covers the whole conversation, it is returned.
+- Otherwise usage is omitted from the response. Hermes then uses its own estimate. The adapter never reports estimated values.
 
-Which case applies is confirmed by pre-implementation check 3 (section 12).
+Pre-implementation check 3 (section 15) determines which case applies.
 
 ### Disconnect
 
 If Hermes closes the connection before the answer is complete, the adapter stops the `agent` process and records nothing.
 
-## 9. Screenshots, models, and the Cursor process
+## 10. Screenshots, models, and the Cursor process
 
 ### Screenshots
 
 - Accepted only as `data:image/<png|jpeg|gif|webp>;base64,...` inside `image_url` parts.
-- `file://` addresses and web addresses are rejected with a 400 error.
-- Maximum 5 MB per decoded image, maximum 10 images per request.
-- Images are saved as `<workspace>/attachments/<request ID>/image-<n>.<ext>`, readable only by the adapter's user, and deleted when the request ends.
-- The prompt lists each image's relative path and asks the model to view it.
+- `file://` addresses and web addresses are rejected with 400.
+- The base64 text must decode strictly, and the first bytes must match the declared image type.
+- Maximum 5 MB per decoded image, 10 images per request, and 20 MB of decoded images per request.
+- Images are saved as `<workspace>/attachments/<request ID>/image-<n>.<ext>`. The folder has mode `0700` and each file has mode `0600`. The folder is deleted when the request ends.
+- The prompt lists each image's path relative to the workspace and asks the model to view it.
 
 ### Model list
 
 - Fetched with `agent --list-models` at startup and whenever the cached list is older than `MODEL_CACHE_MS`.
-- Also saved to `<data folder>/models-cache.json`. If fetching fails, the saved list is used. If there is no saved list, the model list endpoint and chat requests return 503.
-- `GET /v1/models` returns the OpenAI list format: `id`, `object: "model"`, `created`, `owned_by: "cursor"`.
-- Effort is chosen through the model name, for example `claude-opus-5-5-high`. The adapter does not translate Hermes reasoning-effort settings.
-- Only names in the list are accepted. A model prefix such as `openai/` is removed first. This also stops a crafted name such as `--force` from being read as a command-line option.
+- Also saved to `<data folder>/models-cache.json`. If fetching fails, the saved list is used. If there is no saved list, chat requests and the model list return 503.
+- `GET /v1/models` returns Cursor's model names exactly, in the OpenAI list format: `id`, `object: "model"`, `created`, `owned_by: "cursor"`.
+- Effort is chosen by choosing the model name, for example `gpt-5.6-sol-high`. The adapter does not interpret `reasoning_effort`.
+- Only exact names from the list are accepted. No prefix is removed. This also stops a crafted name such as `--force` from being read as a command-line option.
 
 ### How `agent` is run
 
@@ -256,8 +316,8 @@ agent --print --mode ask --trust --workspace <data folder>/workspace
 ```
 
 - Never `--force`, `--yolo`, `--approve-mcps`, or a workspace from a request.
-- The workspace is an empty folder owned by the adapter. `--trust` applies only to it.
-- Environment passed to `agent`: `PATH`, `HOME`, `USER`, `LANG`, `TMPDIR`, `XDG_CONFIG_HOME` and `XDG_DATA_HOME` if set, `CURSOR_API_KEY` if set, and `NO_COLOR=1`. Nothing else, and never the adapter's own API key. Check 5 in section 12 confirms that `agent` works with only these.
+- The workspace is an empty folder owned by the adapter, inside its data folder. It is never a project repository. `--trust` applies only to it.
+- Environment passed to `agent`: `PATH`, `HOME`, `USER`, `LANG`, `TMPDIR`, `XDG_CONFIG_HOME` and `XDG_DATA_HOME` if set, `CURSOR_API_KEY` if set, and `NO_COLOR=1`. Nothing else, and never the adapter's own API key.
 - On timeout or disconnect, the adapter stops the `agent` process and every process it started.
 
 ### Startup checks
@@ -265,89 +325,134 @@ agent --print --mode ask --trust --workspace <data folder>/workspace
 The adapter stops with a clear message if any of these fail:
 
 1. The API key is set and at least 32 characters long.
-2. `agent --version` succeeds.
-3. `agent status` reports a logged-in user.
-4. The data folder and workspace folder can be created and written.
-5. The model list can be fetched, or a saved list exists.
+2. A non-loopback address has HTTPS configured, or `ALLOW_INSECURE_HTTP` is `true`.
+3. Both TLS files are set, or neither is. When set, both can be read.
+4. `agent --version` succeeds.
+5. `agent status` reports a logged-in user.
+6. The data folder and workspace folder can be created with the required modes and written.
+7. The model list can be fetched, or a saved list exists.
 
-No model request is sent at startup.
+No model request is sent at startup. When `ALLOW_INSECURE_HTTP` is used, a warning is logged at every startup.
+
+### Server timeouts
+
+- Request headers must arrive within 10 seconds.
+- The request body must arrive within 60 seconds.
+- Idle keep-alive connections close after 5 seconds.
 
 ### Shutdown
 
 On `SIGINT` or `SIGTERM`, the adapter stops accepting requests, waits up to 30 seconds for running requests, stops any remaining `agent` processes, and saves the conversation index.
 
-## 10. Security and errors
+## 11. Security and errors
 
-### Security
+### Security checks
 
-- **API key.** Required on every request as `Authorization: Bearer <key>`. Compared in constant time.
-- **Network.** Listens on `127.0.0.1` unless configured otherwise. When listening on any other address without HTTPS configured, it logs a warning that the key and conversations travel unencrypted.
-- **HTTPS.** Enabled when both certificate and key files are configured.
-- **Requests.** Only `application/json`, up to the size limit. No CORS headers. `OPTIONS` requests get 405.
-- **Logs.** One JSON line per request with: time, request ID, model, `fresh` or `continued`, the reason for a fresh start (`new`, `no-match`, `resume-failed`), status, duration, characters sent to Cursor, characters of the full prompt, and token counts. Prompts, images, and keys are never logged.
-- **Dependencies.** `npm audit` must report zero vulnerabilities.
-- **Recommended setup (documented, not enforced).** Run the adapter as its own operating system user with its own Cursor login, so `agent` does not load someone's personal Cursor MCP servers or rules.
+Version 1 is complete when all of these are true. Each is covered by a test in section 13 or a startup check in section 10. They address the findings from the review of the original repository.
+
+1. Every request requires the API key, compared in constant time. The adapter does not start without a key of at least 32 characters.
+2. Non-loopback listening requires HTTPS unless `ALLOW_INSECURE_HTTP` is `true`.
+3. No request field or header can select agent mode, a workspace, extra `agent` flags, or local file paths.
+4. `agent` is never started with `--force`, `--yolo`, or `--approve-mcps`.
+5. Model names are accepted only from the model list.
+6. `file://` and web image addresses are rejected. The adapter makes no outbound network requests itself.
+7. No CORS headers are sent. `OPTIONS` requests get 405.
+8. Request size, image size, queue length, queue wait, and server timeouts are all limited.
+9. The adapter's API key is never passed to `agent`.
+10. Logs never contain prompts, images, keys, or raw `agent` output, unless debug logging is enabled.
+11. The data folder is `0700`. The conversation index, model cache, and attachments are readable only by the adapter's user.
+12. `npm audit` reports zero vulnerabilities, and runtime dependencies are limited to `zod` and `yaml`.
+
+### Log contents
+
+One JSON line per request with: time, request ID, model, `fresh` or `continued`, the reason for a fresh start (`new`, `no-match`, `resume-failed`), status, error class if any, duration, characters sent to Cursor, characters of the full prompt, and token counts if available.
 
 ### Errors returned to Hermes
 
-All errors use the OpenAI error body: `{"error": {"message", "type", "code"}}`. Messages are short and contain no stack traces or file paths. Full `agent` error output is logged, cut to 2,000 characters.
+All errors use the OpenAI error body: `{"error": {"message", "type", "code"}}`. Messages are short and contain no stack traces, file paths, or `agent` output.
 
 | Situation | Status | `code` |
 |---|---|---|
-| Invalid request, invalid image, unsupported image address | 400 | `invalid_request_error` |
+| Invalid request, invalid image, unsupported field value | 400 | `invalid_request_error` |
 | Wrong or missing API key | 401 | `invalid_api_key` |
 | Model not in the list | 404 | `model_not_found` |
-| Wrong method or path | 404 or 405 | `not_found` |
+| Unknown path | 404 | `not_found` |
+| Wrong method | 405 | `method_not_allowed` |
 | Body too large | 413 | `request_too_large` |
 | Cursor rate limit | 429 | `rate_limit_exceeded` |
 | Cursor usage limit reached | 429 | `insufficient_quota` |
 | Conversation too long for the model | 400 | `context_length_exceeded` |
+| Queue full or queue wait exceeded | 503 | `server_busy` |
 | Cursor CLI not logged in, or no model list | 503 | `service_unavailable` |
 | Time limit reached | 504 | `timeout` |
 | Any other `agent` failure | 502 | `upstream_error` |
 
-- Cursor does not document its error codes. The error classifier recognizes cases from `agent` exit codes and error text. All patterns live in `error-classifier.ts` with tests built from real samples (check 4 in section 12). Unrecognized failures become 502.
+- Cursor does not document its error codes. The error classifier recognizes cases from `agent` exit codes and error text. All patterns live in `error-classifier.ts` with tests built from real samples (check 4 in section 15). Unrecognized failures become 502.
 - The adapter never retries rate-limited or failed requests itself. Hermes retries. The only automatic retry is the fresh retry after a failed resume (section 6).
 - If a failure happens after streaming started, the adapter sends an error event in the stream and closes it.
 
-## 11. Testing
+## 12. Known gap: Cursor's built-in tools
 
-All tests use Node's built-in test runner. No real Cursor requests are made by automated tests.
+Hermes runs every Hermes tool. However, the adapter can reach Cursor's models only through the `agent` program, which is Cursor's own coding assistant and has its own built-in tools. Ask mode removes the tools that change things, such as writing files and running commands. The read-only tools remain, such as reading files. Depending on the user's Cursor settings, web fetch and MCP tools may also remain. The adapter relies on the file-reading tool to show screenshots to the model.
+
+These tools run directly on the adapter's machine. Hermes never sees them, so Hermes's approvals, allowlists, and secret redaction do not apply to them.
+
+**Risk.** A tool result from Hermes, such as the text of a web page, could contain hidden instructions. Those instructions could lead the model to read a file that the adapter's operating-system user can read, and include its contents in the reply.
+
+**Decision for version 1.** Not addressed. The risk is accepted as negligible for personal use. The adapter does not write a Cursor permissions file.
+
+**Recommendation in the README.** For more protection, run the adapter under a separate operating-system user that has its own Cursor login, no MCP servers or rules in its Cursor settings, and no private files.
+
+**Possible later fix.** Cursor supports a per-project permissions file (`.cursor/cli.json`) that can deny shell commands, writes, web fetches, MCP tools, and some reads ([Cursor permissions](https://cursor.com/docs/cli/reference/permissions)). The adapter could write one into its own workspace.
+
+## 13. Testing
+
+All automated tests use Node's built-in test runner. No automated test sends a real Cursor request.
 
 ### Unit tests
 
-- Fingerprint cleanup, canonical JSON, and matching, including assistant messages returned with `null` content, extra fields, or different tool-call IDs.
-- Conversation index: one-time use, expiry, size cap, save and load, recovery from a corrupt file.
-- Tool protocol parser: valid blocks, several calls, text before the marker, text after the marker, invalid JSON, arguments as objects.
-- Stream splitter: markers split across chunks in every position, text that resembles the marker but is not, output ending mid-marker.
-- Response writer: non-streamed body, streamed chunks, usage chunk, `[DONE]`.
+- Conversation key: canonical form rules, including `null` content, content-part lists, images, tool-call IDs, removed fields, and the affinity header.
+- Conversation index: one-time use with removal written before the run, expiry, size cap, save and load, recovery from a corrupt file.
+- Tool protocol: marker generation, valid blocks, several calls, several blocks, text before and after, a closing marker inside a JSON string, missing closing marker, the 1 MB limit, arguments as objects.
+- Stream splitter: markers split across chunks at every position, lines that resemble the marker but are not, output ending mid-marker.
+- Stream reading: the three kinds of `assistant` events, session ID extraction.
+- Request rules: every row of the table in section 7.
+- Prompt builder: tool-name lookup from tool-call IDs, unmatched tool results, JSON instructions, continued prompt contents.
+- Response writer: non-streamed body, streamed chunks, stable tool-call indexes, usage chunk with `choices: []`, omitted usage, `[DONE]`.
 - Error classifier: every row of the error table, from recorded `agent` output.
-- Images: allowed types, size and count limits, rejected address types, file cleanup.
-- Configuration: missing or short API key, invalid values, environment overriding the file.
-- Model validation: prefix removal, unknown names, names starting with `-`.
+- Images: allowed types, strict base64, first-byte checks, size and count limits, rejected address types, file modes, cleanup.
+- Configuration and startup checks: missing or short key, non-loopback without HTTPS, one TLS file only, environment overriding the file.
 
 ### Integration tests
 
 The whole adapter runs against a fake `agent` executable. The fake replays recorded stream output and records its arguments, standard input, and environment. Tests confirm that:
 
-- `--force` and other forbidden flags are never passed, and the workspace is always the adapter's folder.
-- A second request in the same conversation uses `--resume` and sends only the new messages.
-- A retried or parallel request with the same fingerprint starts fresh.
-- A failed resume is retried once as a fresh session.
+- Forbidden flags are never passed, and the workspace is always the adapter's folder.
+- A second request in the same conversation uses `--resume`, sends only the new messages, and uses the same tool marker.
+- Two conversations with identical messages but different affinity headers never share a session.
+- A retried or parallel request with the same key starts fresh.
+- A failed resume is retried once as a fresh session, and a rate-limit failure is not retried.
 - The adapter's API key is not in the environment given to `agent`.
 - `agent` is stopped when the client disconnects or the time limit is reached.
 - Continuation still works after the adapter restarts.
+- Queue limits and server timeouts behave as specified.
+- Streamed responses parse correctly with the official OpenAI Python SDK, the same client library Hermes uses.
 
 ### Manual end-to-end check
 
-With real Hermes and Cursor:
+With real Hermes (using the configuration in section 14) and real Cursor:
 
-1. A simple chat.
+1. A simple chat, streamed and not streamed.
 2. A multi-step tool task.
 3. A screenshot.
 4. Switching models mid-conversation.
 5. Restarting the adapter mid-conversation.
 6. A conversation long enough for Hermes to compress its history.
+7. Title generation and compression assigned to the Cursor provider.
+8. A subagent (delegation) assigned to the Cursor provider.
+9. The effort picker in Hermes Desktop for this provider is hidden or disabled.
+
+During this check, the adapter log must show `continued` on normal steps. A `no-match` on a normal step means Hermes changed an earlier message, and the canonical form rules must be revisited.
 
 ### Performance measurements
 
@@ -355,43 +460,54 @@ These measure the adapter only, not Cursor.
 
 | Measurement | Method | Target |
 |---|---|---|
-| Time the adapter adds per request | Benchmark against the fake `agent`, which answers immediately | Under 10 ms |
-| Delay before streamed text reaches Hermes | Same benchmark, from fake output to client receipt | Under 5 ms |
-| Share of steps that continue a session | Metadata log from the manual check | Over 90% of steps after the first |
-| Prompt size on continued steps | Characters sent compared with the full prompt | Under 20% of the full prompt |
+| Adapter processing time per request, excluding the time to start `agent` | Internal timestamps, benchmark against the fake `agent` | Under 10 ms |
+| Delay between receiving output from `agent` and writing it to Hermes | Same benchmark | Under 5 ms per chunk |
+| Share of continued steps | Adapter log during the manual check | Over 90% of steps after the first, excluding steps after compression |
+| Prompt size on continued steps | Characters sent to Cursor compared with the full prompt | Reported for the manual check; no fixed target, because it depends on the task |
 
-## 12. Pre-implementation checks
-
-Done with a few tiny real Cursor requests before any code is written:
-
-1. `agent --resume <session ID>` works with the prompt on standard input, in a fixed workspace folder, from a new process.
-2. Ask mode can view an image saved in the workspace folder.
-3. Stream output includes token usage, and whether a continued session reports usage for the whole conversation.
-4. Error output for an unknown model and for a missing login, recorded as test samples.
-5. `agent` runs with only the environment variables listed in section 9.
-
-If check 1 or 2 fails, work stops and the design is revisited, because the approach depends on them.
-
-## 13. Hermes configuration
+## 14. Hermes configuration
 
 ```yaml
 providers:
   cursor:
-    api: http://<adapter address>:8787/v1
+    api: https://<adapter address>:8787/v1
     transport: chat_completions
     key_env: CURSOR2OPENAI_API_KEY
     default_model: composer-2.5
+    session_affinity_header: X-Cursor2openai-Conversation
+
+model_overrides:
+  custom:cursor:
+    _default:
+      supports_reasoning: false   # no effort sent; effort comes from the model name
+      supports_vision: true       # send screenshots natively
 
 model:
   provider: custom:cursor
   default: composer-2.5
 ```
 
-The same key goes in Hermes's `.env` file as `CURSOR2OPENAI_API_KEY`. Use `https://` when HTTPS is enabled.
+- The same key goes in Hermes's `.env` file as `CURSOR2OPENAI_API_KEY`.
+- With a self-signed certificate, add `ssl_ca_cert: <path>` to the provider entry.
+- Use `http://` only with `ALLOW_INSECURE_HTTP=true` on the adapter.
+- Auxiliary tasks and delegation can point at the same provider with any Cursor model name.
 
-## 14. Known limitations
+## 15. Pre-implementation checks
+
+Done with a few tiny real Cursor requests before any code is written:
+
+1. `agent --resume <session ID>` works with the prompt on standard input, in a fixed workspace folder, from a new process.
+2. Ask mode can view an image saved in the workspace folder.
+3. Whether stream output includes token usage, and whether a continued session reports usage for the whole conversation.
+4. Error output for an unknown model, a missing login, and a rate or usage limit if one can be produced, recorded as test samples.
+5. `agent` runs with only the environment variables listed in section 10.
+
+If check 1 or 2 fails, work stops and the design is revisited, because the approach depends on them.
+
+## 16. Other known limitations
 
 - Cursor keeps saved sessions on disk and never deletes them. The adapter does not delete Cursor's internal files, because their layout is not documented.
 - Whether Cursor can resume a session that is several days old is not confirmed. If it cannot, the fresh retry keeps the conversation working at the cost of one slower step.
-- Each step still starts a new `agent` process and loads the saved session. Removing that cost would require the long-running approach rejected in section 3.
+- Each step still starts a new `agent` process and loads the saved session.
+- `tool_choice`, `parallel_tool_calls`, and `response_format` are followed through instructions to the model, so compliance is likely but not guaranteed.
 - Error recognition depends on `agent` error text, which may change between Cursor releases.
