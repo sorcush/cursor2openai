@@ -31,7 +31,7 @@ Hermes must behave on the Cursor provider the same way it behaves on the OpenAI 
 ### Known limitations accepted for version 1
 
 - **Reasoning text is not available.** Cursor suppresses thinking output in print mode for every output format ([Cursor output format](https://cursor.com/docs/cli/reference/output-format)). Hermes will not show the model's reasoning for this provider. The selected effort level still applies, because it is part of the model name.
-- **Cursor's built-in read-only tools are not locked down.** See section 12.
+- **Cursor's built-in tools are only partly locked down.** A permissions file blocks MCP tools, shell commands, writes, web fetches, and reads of the user's home folder. Some reads remain possible. See section 12.
 
 ## 2. Scope
 
@@ -68,6 +68,8 @@ Each Hermes request starts a short-lived `agent` process in print mode. The adap
 
 No `agent` process stays running between requests. A Cursor session is saved data plus an ID. The Cursor CLI stores sessions on local disk, grouped by workspace folder (`~/.cursor/chats/<workspace id>/<session id>`). For that reason the adapter always uses the same workspace folder.
 
+The workspace folder is the adapter's own folder. It is never a project repository. It lives outside the user's home folder, in a permanent location, because the permissions file denies reads of the home folder and a deny rule would also block screenshots stored there (section 12).
+
 The benefit claimed for this approach is smaller prompts on continued steps, measured as characters sent to Cursor. End-to-end speed of Cursor's responses is not measured and not claimed.
 
 Rejected alternatives:
@@ -92,6 +94,7 @@ Each file has one job. File names use kebab-case.
 | `src/prompt/stream-splitter.ts` | Splits streamed model output into text to send now, text to hold back, and tool-call blocks. |
 | `src/images/attachments.ts` | Validates embedded images, saves them for one request, deletes them afterward. |
 | `src/cursor/agent-runner.ts` | Starts `agent` with fixed flags and a minimal environment, parses and de-duplicates its stream output, stops it on disconnect or timeout. |
+| `src/cursor/workspace-permissions.ts` | Builds the Cursor permissions file for the workspace, writes it, and verifies it before each run. |
 | `src/cursor/error-classifier.ts` | Maps `agent` failures to OpenAI-style errors. |
 | `src/cursor/model-list.ts` | Fetches and caches the list of models available to the Cursor login. |
 | `src/openai/types.ts` | Request and response types for the Chat Completions format. |
@@ -113,7 +116,8 @@ Environment variables override the optional file `<data folder>/config.yaml`. Re
 | `CURSOR2OPENAI_TLS_CERT_FILE` | none | Certificate file. With the key file, enables HTTPS. |
 | `CURSOR2OPENAI_TLS_KEY_FILE` | none | Private key file for HTTPS. |
 | `CURSOR2OPENAI_ALLOW_INSECURE_HTTP` | `false` | Must be `true` to listen on a non-loopback address without HTTPS. |
-| `CURSOR2OPENAI_DATA_DIR` | `~/.cursor2openai` | Holds the workspace folder, conversation index, model cache, and optional config file. Created with mode `0700`. |
+| `CURSOR2OPENAI_DATA_DIR` | `~/.cursor2openai` | Holds the conversation index, model cache, and optional config file. Created with mode `0700`. |
+| `CURSOR2OPENAI_WORKSPACE_DIR` | macOS: `/Users/Shared/cursor2openai`; Linux: `/var/lib/cursor2openai` | The folder `agent` runs in. Holds the Cursor permissions file and temporary screenshots. Must be outside the home folder, owned by the adapter's user, and mode `0700`. |
 | `CURSOR2OPENAI_DEFAULT_MODEL` | `composer-2.5` | Used when a request names no model. |
 | `CURSOR2OPENAI_AGENT_BIN` | `agent` | Path to the Cursor CLI. |
 | `CURSOR2OPENAI_REQUEST_TIMEOUT_MS` | `600000` | Time limit for one `agent` run (10 minutes). |
@@ -310,13 +314,14 @@ If Hermes closes the connection before the answer is complete, the adapter stops
 Fixed arguments:
 
 ```text
-agent --print --mode ask --trust --workspace <data folder>/workspace
+agent --print --mode ask --trust --workspace <workspace folder>
       --model <model> --output-format stream-json --stream-partial-output
       [--resume <session ID>]
 ```
 
 - Never `--force`, `--yolo`, `--approve-mcps`, or a workspace from a request.
-- The workspace is an empty folder owned by the adapter, inside its data folder. It is never a project repository. `--trust` applies only to it.
+- The workspace folder is set by `CURSOR2OPENAI_WORKSPACE_DIR`. It contains only the Cursor permissions file (section 12) and temporary screenshots. It is never a project repository. `--trust` applies only to it.
+- Before each run, the adapter verifies that the permissions file exists with exactly the expected content, and rewrites it if not.
 - Environment passed to `agent`: `PATH`, `HOME`, `USER`, `LANG`, `TMPDIR`, `XDG_CONFIG_HOME` and `XDG_DATA_HOME` if set, `CURSOR_API_KEY` if set, and `NO_COLOR=1`. Nothing else, and never the adapter's own API key.
 - On timeout or disconnect, the adapter stops the `agent` process and every process it started.
 
@@ -329,7 +334,10 @@ The adapter stops with a clear message if any of these fail:
 3. Both TLS files are set, or neither is. When set, both can be read.
 4. `agent --version` succeeds.
 5. `agent status` reports a logged-in user.
-6. The data folder and workspace folder can be created with the required modes and written.
+6. The data folder can be created with mode `0700` and written.
+7. The workspace folder exists or can be created, is owned by the adapter's user, has mode `0700`, and can be written. On Linux the default location usually needs a one-time setup: `sudo install -d -o "$USER" -m 700 /var/lib/cursor2openai`. The startup message shows this command when the folder cannot be created.
+8. The workspace folder is not inside any folder the permissions file denies, such as the home folder. Otherwise screenshots would be unreadable.
+9. The permissions file can be written into the workspace folder.
 7. The model list can be fetched, or a saved list exists.
 
 No model request is sent at startup. When `ALLOW_INSECURE_HTTP` is used, a warning is logged at every startup.
@@ -362,6 +370,7 @@ Version 1 is complete when all of these are true. Each is covered by a test in s
 10. Logs never contain prompts, images, keys, or raw `agent` output, unless debug logging is enabled.
 11. The data folder is `0700`. The conversation index, model cache, and attachments are readable only by the adapter's user.
 12. `npm audit` reports zero vulnerabilities, and runtime dependencies are limited to `zod` and `yaml`.
+13. The Cursor permissions file (section 12) is present with the expected rules before every `agent` run.
 
 ### Log contents
 
@@ -391,19 +400,50 @@ All errors use the OpenAI error body: `{"error": {"message", "type", "code"}}`. 
 - The adapter never retries rate-limited or failed requests itself. Hermes retries. The only automatic retry is the fresh retry after a failed resume (section 6).
 - If a failure happens after streaming started, the adapter sends an error event in the stream and closes it.
 
-## 12. Known gap: Cursor's built-in tools
+## 12. Cursor's built-in tools and the permissions file
 
-Hermes runs every Hermes tool. However, the adapter can reach Cursor's models only through the `agent` program, which is Cursor's own coding assistant and has its own built-in tools. Ask mode removes the tools that change things, such as writing files and running commands. The read-only tools remain, such as reading files. Depending on the user's Cursor settings, web fetch and MCP tools may also remain. The adapter relies on the file-reading tool to show screenshots to the model.
+### The problem
 
-These tools run directly on the adapter's machine. Hermes never sees them, so Hermes's approvals, allowlists, and secret redaction do not apply to them.
+Hermes runs every Hermes tool. However, the adapter can reach Cursor's models only through the `agent` program, which is Cursor's own coding assistant and has its own built-in tools. These tools run directly on the adapter's machine. Hermes never sees them, so Hermes's approvals, allowlists, and secret redaction do not apply to them.
 
-**Risk.** A tool result from Hermes, such as the text of a web page, could contain hidden instructions. Those instructions could lead the model to read a file that the adapter's operating-system user can read, and include its contents in the reply.
+A tool result from Hermes, such as the text of a web page, could contain hidden instructions. Those instructions could lead the model to use Cursor's tools: read a private file and include it in the reply, or call an MCP tool from the user's Cursor settings. Those MCP tools may be pre-approved in the user's global Cursor settings and may run commands or write files.
 
-**Decision for version 1.** Not addressed. The risk is accepted as negligible for personal use. The adapter does not write a Cursor permissions file.
+### The mitigation
 
-**Recommendation in the README.** For more protection, run the adapter under a separate operating-system user that has its own Cursor login, no MCP servers or rules in its Cursor settings, and no private files.
+The adapter writes a Cursor per-project permissions file, `<workspace folder>/.cursor/cli.json` ([Cursor permissions](https://cursor.com/docs/cli/reference/permissions)). It writes the file at startup and verifies it before every run (section 10). The file denies:
 
-**Possible later fix.** Cursor supports a per-project permissions file (`.cursor/cli.json`) that can deny shell commands, writes, web fetches, MCP tools, and some reads ([Cursor permissions](https://cursor.com/docs/cli/reference/permissions)). The adapter could write one into its own workspace.
+- `Shell(*)`: all shell commands
+- `Write(**)`: all file writes
+- `WebFetch(*)`: all web fetches
+- `Mcp(*:*)`: all MCP tools
+- `Read(~/**)`: the user's home folder, plus the same folder under its alternate macOS spelling `/System/Volumes/Data<home>/**`
+- `Read(/etc/**)` and `Read(/root/**)`, plus `/private/etc/**` on macOS
+
+The file has no allow rules, because allow rules do not restrict reads that are not listed, and deny rules always win over allow rules.
+
+### Evidence from the spike on 2026-09-25 (macOS)
+
+Tested with `agent --print --mode ask --trust --workspace <folder>` and `composer-2.5-fast`, checking Cursor's own tool events:
+
+| Test | Without the file | With the file |
+|---|---|---|
+| Read a file outside the workspace | Read and returned | Blocked when its folder is denied |
+| Read a file in the home folder | Read and returned | Blocked by `Read(~/**)` |
+| Read a denied file through a relative path (`../`) | not tested | Blocked |
+| Read a denied file through an alternate spelling (`/private/tmp` for `/tmp`) | not tested | **Read and returned** |
+| View a screenshot in the workspace | Works | Works, when the workspace is not inside a denied folder |
+| Shell `cat` after a denied read | not tested | Blocked by `Shell(*)` |
+| Web fetch | not tested | Blocked |
+| MCP tool pre-approved in global settings | not tested | Blocked by `Mcp(*:*)` |
+| Deny all reads, allow only the screenshots folder | not applicable | Screenshot blocked: the deny wins |
+
+### Remaining gap, accepted for version 1
+
+- Files outside the denied folders remain readable, for example under `/tmp`, `/var`, `/opt`, `/Users/Shared`, and other system folders.
+- A denied file can still be read through a path spelling the file does not list, or through a symbolic link that points into a denied folder. The rules compare path text, not the real file.
+- Cursor may add new tools in future releases that the file does not cover.
+
+**Recommendation in the README.** For complete protection, run the adapter under a separate operating-system user that has its own Cursor login, no MCP servers or rules in its Cursor settings, and no private files.
 
 ## 13. Testing
 
@@ -421,13 +461,16 @@ All automated tests use Node's built-in test runner. No automated test sends a r
 - Response writer: non-streamed body, streamed chunks, stable tool-call indexes, usage chunk with `choices: []`, omitted usage, `[DONE]`.
 - Error classifier: every row of the error table, from recorded `agent` output.
 - Images: allowed types, strict base64, first-byte checks, size and count limits, rejected address types, file modes, cleanup.
-- Configuration and startup checks: missing or short key, non-loopback without HTTPS, one TLS file only, environment overriding the file.
+- Configuration and startup checks: missing or short key, non-loopback without HTTPS, one TLS file only, environment overriding the file, workspace folder inside the home folder, wrong owner, wrong mode.
+- Workspace permissions: the generated rules for macOS and Linux home paths, and detection of a changed or missing file.
 
 ### Integration tests
 
 The whole adapter runs against a fake `agent` executable. The fake replays recorded stream output and records its arguments, standard input, and environment. Tests confirm that:
 
-- Forbidden flags are never passed, and the workspace is always the adapter's folder.
+- Forbidden flags are never passed, and the workspace is always the configured workspace folder.
+- The permissions file is written at startup with exactly the rules in section 12, and is restored before a run if it was changed or deleted.
+- The adapter refuses to start when the workspace folder is inside the home folder, has the wrong owner, or has the wrong mode.
 - A second request in the same conversation uses `--resume`, sends only the new messages, and uses the same tool marker.
 - Two conversations with identical messages but different affinity headers never share a session.
 - A retried or parallel request with the same key starts fresh.
@@ -501,8 +544,10 @@ Done with a few tiny real Cursor requests before any code is written:
 3. Whether stream output includes token usage, and whether a continued session reports usage for the whole conversation.
 4. Error output for an unknown model, a missing login, and a rate or usage limit if one can be produced, recorded as test samples.
 5. `agent` runs with only the environment variables listed in section 10.
+6. On Linux, the permissions file blocks the same things it blocked in the macOS spike (section 12): a home-folder read, a shell command, a web fetch, and an MCP tool, while a screenshot in the workspace stays readable.
+7. `agent --resume` still works after the workspace folder is deleted and recreated at the same path.
 
-If check 1 or 2 fails, work stops and the design is revisited, because the approach depends on them.
+If check 1, 2, or 6 fails, work stops and the design is revisited, because the approach depends on them.
 
 ## 16. Other known limitations
 
