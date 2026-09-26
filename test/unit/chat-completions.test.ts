@@ -250,6 +250,19 @@ test("an error after streaming started is sent as a stream event", async () => {
   assert.equal(events.at(-2).error.code, "timeout")
 })
 
+test("a continued request logs full prompt size including earlier images", async () => {
+  const withImage = [{ role: "user", content: [{ type: "text", text: "pic" }, { type: "image_url", image_url: { url: PNG } }] }]
+  await json({ messages: withImage })
+  script = reply("Second")
+  await json({ messages: [...withImage, { role: "assistant", content: "Hello" }, { role: "user", content: "next" }] })
+  const withoutImage = [{ role: "user", content: "pic" }]
+  await json({ messages: withoutImage })
+  script = reply("Third")
+  await json({ messages: [...withoutImage, { role: "assistant", content: "Hello" }, { role: "user", content: "next" }] })
+  await waitForLogs(4)
+  assert.ok((logs[1].fullPromptChars ?? 0) > (logs[3].fullPromptChars ?? 0))
+})
+
 test("screenshots are saved for the run and removed afterwards", async () => {
   let seenPath = ""
   script = async (input, onText) => {

@@ -28,6 +28,7 @@ const matchesSignature = (type: ImageType, data: Buffer): boolean => {
   }
 }
 
+// SECURITY-REVIEW: decodes external base64 data with a strict alphabet, canonical re-encoding, size limits, and a file-signature check.
 export const decodeImageDataUrl = (url: string): { type: ImageType; extension: string; data: Buffer } => {
   const match = /^data:image\/(png|jpeg|gif|webp);base64,([\s\S]*)$/.exec(url)
   if (!match) throw invalid("Images must be embedded as data:image/png, jpeg, gif, or webp base64 addresses")
@@ -69,6 +70,7 @@ export const saveImages = async (input: {
 
   const relativeDir = join("attachments", input.requestId)
   const absoluteDir = join(input.workspaceDir, relativeDir)
+  // SECURITY-REVIEW: writes request data only under the adapter's private workspace, with generated names, mode 0700/0600, and exclusive-create flags.
   await mkdir(absoluteDir, { mode: 0o700 })
   const cleanup = () => rm(absoluteDir, { recursive: true, force: true })
   const paths = new Map<string, string>()
@@ -83,4 +85,23 @@ export const saveImages = async (input: {
     throw error
   }
   return { paths, cleanup }
+}
+
+export const estimateFreshImagePaths = (requestId: string, messages: ChatMessage[]): ImagePaths => {
+  const paths = new Map<string, string>()
+  let imageNumber = 0
+  const relativeDir = join("attachments", `${requestId}-fresh`)
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const content = messages[messageIndex].content
+    if (!Array.isArray(content)) continue
+    content.forEach((part, partIndex) => {
+      if (part.type !== "image_url") return
+      const match = /^data:image\/(png|jpeg|gif|webp);base64,/i.exec(imageUrlOf(part) ?? "")
+      if (!match) return
+      const ext = match[1] === "jpeg" ? "jpg" : match[1].toLowerCase()
+      imageNumber += 1
+      paths.set(imageKey(messageIndex, partIndex), join(relativeDir, `image-${imageNumber}.${ext}`))
+    })
+  }
+  return paths
 }

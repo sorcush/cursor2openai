@@ -5,7 +5,7 @@ import { type Controls, conversationKey, lastAssistantIndex } from "../conversat
 import { AgentAbortedError, type AgentRunInput, type AgentRunResult } from "../cursor/agent-runner.js"
 import type { ModelCatalog } from "../cursor/model-list.js"
 import { toOpenAiUsage } from "../cursor/usage.js"
-import { saveImages } from "../images/attachments.js"
+import { estimateFreshImagePaths, saveImages } from "../images/attachments.js"
 import type { Logger, RequestLogEntry } from "../log.js"
 import { buildContinuedPrompt, buildFullPrompt, stripCodeFences, toolsActive } from "../prompt/prompt-builder.js"
 import { type SplitterEvent, StreamSplitter } from "../prompt/stream-splitter.js"
@@ -132,7 +132,7 @@ export const handleChatCompletions = async (req: IncomingMessage, res: ServerRes
           result,
           marker,
           promptChars: prompt.length,
-          fullPromptChars: resume ? buildFullPrompt(request, marker, new Map()).length : prompt.length,
+          fullPromptChars: resume ? buildFullPrompt(request, marker, estimateFreshImagePaths(requestId, request.messages)).length : prompt.length,
           droppedChars: end.summary.droppedChars,
           invalidToolBlock: end.summary.invalidBlockReason,
         }
