@@ -14,9 +14,12 @@ Design: [`docs/superpowers/specs/2026-09-25-hermes-cursor-adapter-design.md`](do
 ```bash
 npm ci
 npm run build
-export CURSOR2OPENAI_API_KEY="$(openssl rand -hex 32)"
-node dist/cli.js
+cp .env.example .env
+# Set CURSOR2OPENAI_API_KEY in .env, for example to the output of: openssl rand -hex 32
+node --env-file=.env dist/cli.js
 ```
+
+`.env` is git-ignored. You can also set the variables in your shell instead and run `node dist/cli.js`.
 
 On Linux, create the workspace folder once:
 
@@ -28,7 +31,7 @@ The adapter listens on `http://127.0.0.1:8787/v1` by default.
 
 ## Configuration
 
-Environment variables override `~/.cursor2openai/config.yaml` (keys are the lowercase names without the prefix, for example `port: 9000`). See [`examples/config.yaml`](examples/config.yaml).
+Set these in `.env` (start from [`.env.example`](.env.example)) or in your shell. Environment variables override `~/.cursor2openai/config.yaml` (keys are the lowercase names without the prefix, for example `port: 9000`). See [`examples/config.yaml`](examples/config.yaml).
 
 | Variable | Default | Meaning |
 |---|---|---|
