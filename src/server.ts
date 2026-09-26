@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto"
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 import http, { type IncomingMessage, type ServerResponse } from "node:http"
 import https from "node:https"
 import type { AddressInfo } from "node:net"
@@ -64,6 +64,12 @@ export const readJsonBody = (req: IncomingMessage, limit: number): Promise<unkno
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
+type RouteContext = {
+  path: string
+  logMeta: (status: number, errorClass?: string) => void
+  reachedHandler: { value: boolean }
+}
+
 export const createAdapterServer = (options: ServerOptions): AdapterServer => {
   const active = new Set<AbortController>()
   const chat: ChatDeps = {
@@ -75,18 +81,18 @@ export const createAdapterServer = (options: ServerOptions): AdapterServer => {
     },
   }
 
-  const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const path = new URL(req.url ?? "/", "http://localhost").pathname
+  const route = async (req: IncomingMessage, res: ServerResponse, ctx: RouteContext): Promise<void> => {
     if (req.method === "OPTIONS") throw methodNotAllowed()
     if (!isAuthorized(req.headers.authorization, options.apiKey)) throw new AdapterError(401, "invalid_api_key", "Invalid API key")
-    if (path === "/v1/models") {
+    if (ctx.path === "/v1/models") {
       if (req.method !== "GET") throw methodNotAllowed()
       const created = Math.floor(Date.now() / 1000)
       const ids = await options.models.list()
       sendJson(res, 200, { object: "list", data: ids.map((id) => ({ id, object: "model", created, owned_by: "cursor" })) })
+      ctx.logMeta(200)
       return
     }
-    if (path !== "/v1/chat/completions") throw new AdapterError(404, "not_found", "Not found")
+    if (ctx.path !== "/v1/chat/completions") throw new AdapterError(404, "not_found", "Not found")
     if (req.method !== "POST") throw methodNotAllowed()
     if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
       throw new AdapterError(400, "invalid_request_error", "Content-Type must be application/json")
@@ -102,11 +108,16 @@ export const createAdapterServer = (options: ServerOptions): AdapterServer => {
       release = await options.queue.acquire(disconnect.signal)
       if (disconnect.signal.aborted) {
         release()
+        ctx.logMeta(499, "client_disconnected")
         return
       }
+      ctx.reachedHandler.value = true
       await handleChatCompletions(req, res, body, chat)
     } catch (error) {
-      if (error instanceof QueueAbortedError) return
+      if (error instanceof QueueAbortedError) {
+        ctx.logMeta(499, "client_disconnected")
+        return
+      }
       throw error
     } finally {
       res.off("close", onClientClose)
@@ -115,8 +126,20 @@ export const createAdapterServer = (options: ServerOptions): AdapterServer => {
   }
 
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
-    route(req, res).catch((error: unknown) => {
+    const started = Date.now()
+    const requestId = randomBytes(8).toString("hex")
+    const path = new URL(req.url ?? "/", "http://localhost").pathname
+    const reachedHandler = { value: false }
+    const logMeta = (status: number, errorClass?: string): void => {
+      options.chat.logger.request({ requestId, model: "", route: path, status, errorClass, durationMs: Date.now() - started })
+    }
+    route(req, res, { path, logMeta, reachedHandler }).catch((error: unknown) => {
+      if (error instanceof QueueAbortedError) {
+        logMeta(499, "client_disconnected")
+        return
+      }
       const failure = error instanceof AdapterError ? error : new AdapterError(500, "internal_error", "Internal adapter error")
+      if (!reachedHandler.value) logMeta(failure.status, failure.code)
       if (failure.status === 413) res.setHeader("connection", "close")
       if (!res.headersSent) sendError(res, failure)
       else res.end()

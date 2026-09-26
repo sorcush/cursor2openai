@@ -70,6 +70,25 @@ test("lists the Cursor models", async () => {
   assert.equal(body.data[0].owned_by, "cursor")
 })
 
+test("every request emits one metadata log line", async () => {
+  harness = await startAdapter({ dir: dir.path, scenarios: [{ lines: replyLines("s1", "Hello") }] })
+  assert.equal((await fetch(`${harness.url}/v1/models`, { headers: { authorization: "Bearer wrong" } })).status, 401)
+  assert.equal(harness.logs.length, 1)
+  assert.equal(harness.logs[0].route, "/v1/models")
+  assert.equal(harness.logs[0].status, 401)
+  assert.equal(harness.logs[0].errorClass, "invalid_api_key")
+  harness.logs.length = 0
+  assert.equal((await fetch(`${harness.url}/v1/models`, { headers: { authorization: `Bearer ${API_KEY}` } })).status, 200)
+  assert.equal(harness.logs.length, 1)
+  assert.equal(harness.logs[0].route, "/v1/models")
+  assert.equal(harness.logs[0].status, 200)
+  harness.logs.length = 0
+  await harness.post({ messages: hi })
+  assert.equal(harness.logs.length, 1)
+  assert.equal(harness.logs[0].status, 200)
+  assert.equal(harness.logs[0].model, "composer-2.5")
+})
+
 test("a tool round trip continues the Cursor session with only the new messages", async () => {
   harness = await startAdapter({
     dir: dir.path,

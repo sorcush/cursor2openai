@@ -1,6 +1,7 @@
 export type RequestLogEntry = {
   requestId: string
   model: string
+  route?: string
   mode?: "fresh" | "continued"
   freshReason?: "new" | "no-match" | "resume-failed"
   status: number
