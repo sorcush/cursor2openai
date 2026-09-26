@@ -107,6 +107,7 @@ export const runAgent = (input: AgentRunInput, onText: (text: string) => void): 
       reject(new AdapterError(404, "model_not_found", `Unknown model: ${input.model}`))
       return
     }
+    // SECURITY-REVIEW: runs the Cursor CLI with a fixed argument list, an allowlisted environment, no shell, and the prompt on stdin; model names starting with "-" are rejected above.
     const child = spawn(input.agentBin, buildAgentArgs(input), {
       cwd: input.workspaceDir,
       env: input.env,
@@ -123,12 +124,14 @@ export const runAgent = (input: AgentRunInput, onText: (text: string) => void): 
       const pid = child.pid
       if (pid === undefined) return
       try {
+        // SECURITY-REVIEW: signals only the process group this adapter created for this run.
         process.kill(-pid, "SIGTERM")
       } catch {
         return
       }
       setTimeout(() => {
         try {
+          // SECURITY-REVIEW: signals only the process group this adapter created for this run.
           process.kill(-pid, "SIGKILL")
         } catch {
           // The group has already exited.
@@ -189,6 +192,7 @@ export const runAgentCommand = (
   timeoutMs: number,
 ): Promise<{ code: number | null; stdout: string; stderr: string }> =>
   new Promise((resolve) => {
+    // SECURITY-REVIEW: runs the Cursor CLI with caller-fixed arguments, the allowlisted environment, and no shell.
     const child = spawn(agentBin, args, { env, stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
     let stderr = ""
