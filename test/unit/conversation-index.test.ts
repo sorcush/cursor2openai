@@ -76,6 +76,15 @@ test("the least recently used entries are removed above the cap", async () => {
   await index.close()
 })
 
+test("a missing file produces a warning and an empty index", async () => {
+  const warnings: string[] = []
+  const index = await open({ onWarning: (message) => warnings.push(message) })
+  assert.equal(index.size(), 0)
+  assert.equal(warnings.length, 1)
+  assert.equal(warnings[0], "No conversation index found; starting with an empty index")
+  await index.close()
+})
+
 test("a corrupt file produces a warning and an empty index", async () => {
   await writeFile(file, "{not json")
   const warnings: string[] = []

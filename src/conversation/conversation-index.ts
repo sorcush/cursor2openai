@@ -106,7 +106,10 @@ export class ConversationIndex {
     try {
       raw = await readFile(this.options.filePath, "utf8")
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === "ENOENT") {
+        this.options.onWarning?.("No conversation index found; starting with an empty index")
+      } else {
         this.options.onWarning?.(`Could not read the conversation index: ${(error as Error).message}`)
       }
       return
