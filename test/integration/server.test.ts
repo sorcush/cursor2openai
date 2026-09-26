@@ -179,6 +179,51 @@ test("a full queue returns 503 server_busy", async () => {
   assert.deepEqual(statuses.sort(), [200, 503])
 })
 
+test("a queued request aborted while waiting never runs the agent", async () => {
+  harness = await startAdapter({
+    dir: dir.path,
+    maxConcurrent: 1,
+    maxQueued: 1,
+    scenarios: [{ lines: replyLines("s1", "Hello"), lineDelayMs: 300 }, { lines: replyLines("s2", "Other") }],
+  })
+  const first = harness.post({ messages: hi })
+  await waitFor(async () => (await harness!.agent.invocations()).length === 1)
+  const controller = new AbortController()
+  const second = harness.post({ messages: [{ role: "user", content: "queued" }] }, { signal: controller.signal }).catch(() => undefined)
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  controller.abort()
+  await second
+  await first
+  assert.equal((await harness.agent.invocations()).length, 1)
+})
+
+test("shutdown rejects a queued request before it reaches the agent", async () => {
+  harness = await startAdapter({
+    dir: dir.path,
+    maxConcurrent: 1,
+    maxQueued: 1,
+    scenarios: [{ lines: replyLines("s1", "Hello"), lineDelayMs: 500 }, { lines: replyLines("s2", "Other") }],
+  })
+  const agent = harness.agent
+  const firstDone = harness.post({ messages: hi }).catch(() => undefined)
+  await waitFor(async () => (await agent.invocations()).length === 1)
+  let secondStatus: number | undefined
+  const secondDone = harness.post({ messages: [{ role: "user", content: "queued" }] }).then(
+    (response) => {
+      secondStatus = response.status
+    },
+    () => {
+      secondStatus = 0
+    },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  await harness.stop()
+  await Promise.all([secondDone, firstDone])
+  harness = undefined
+  assert.equal((await agent.invocations()).length, 1)
+  assert.ok(secondStatus === 503 || secondStatus === 0)
+})
+
 test("a client that never finishes sending headers is disconnected", async () => {
   harness = await startAdapter({ dir: dir.path, timeouts: { headersMs: 200, requestMs: 400, keepAliveMs: 100, checkIntervalMs: 100 } })
   const socket = net.connect(harness.port, "127.0.0.1")

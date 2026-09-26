@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto"
 import http, { type IncomingMessage, type ServerResponse } from "node:http"
 import https from "node:https"
 import type { AddressInfo } from "node:net"
-import type { RequestQueue } from "./concurrency.js"
+import { QueueAbortedError, type RequestQueue } from "./concurrency.js"
 import type { ModelCatalog } from "./cursor/model-list.js"
 import { type ChatDeps, handleChatCompletions } from "./openai/chat-completions.js"
 import { AdapterError } from "./openai/errors.js"
@@ -11,7 +11,7 @@ import { sendError, sendJson } from "./openai/response-writer.js"
 export type ServerOptions = {
   apiKey: string
   maxBodyBytes: number
-  queue: Pick<RequestQueue, "acquire">
+  queue: Pick<RequestQueue, "acquire" | "close">
   models: Pick<ModelCatalog, "has" | "list">
   chat: Omit<ChatDeps, "models" | "trackRequest">
   tls?: { cert: Buffer; key: Buffer }
@@ -91,12 +91,26 @@ export const createAdapterServer = (options: ServerOptions): AdapterServer => {
     if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
       throw new AdapterError(400, "invalid_request_error", "Content-Type must be application/json")
     }
-    const body = await readJsonBody(req, options.maxBodyBytes)
-    const release = await options.queue.acquire()
+    const disconnect = new AbortController()
+    const onClientClose = (): void => {
+      if (!res.writableFinished) disconnect.abort()
+    }
+    res.on("close", onClientClose)
+    let release: (() => void) | undefined
     try {
+      const body = await readJsonBody(req, options.maxBodyBytes)
+      release = await options.queue.acquire(disconnect.signal)
+      if (disconnect.signal.aborted) {
+        release()
+        return
+      }
       await handleChatCompletions(req, res, body, chat)
+    } catch (error) {
+      if (error instanceof QueueAbortedError) return
+      throw error
     } finally {
-      release()
+      res.off("close", onClientClose)
+      release?.()
     }
   }
 
@@ -129,6 +143,7 @@ export const createAdapterServer = (options: ServerOptions): AdapterServer => {
         })
       }),
     shutdown: async (graceMs) => {
+      options.queue.close()
       server.close()
       server.closeIdleConnections()
       const deadline = Date.now() + graceMs
