@@ -35,6 +35,7 @@ export const isAuthorized = (header: string | undefined, apiKey: string): boolea
 const tooLarge = (): AdapterError => new AdapterError(413, "request_too_large", "The request body is too large")
 const methodNotAllowed = (): AdapterError => new AdapterError(405, "method_not_allowed", "Method not allowed")
 
+// SECURITY-REVIEW: parses external JSON with a size limit.
 export const readJsonBody = (req: IncomingMessage, limit: number): Promise<unknown> =>
   new Promise((resolve, reject) => {
     const declared = Number(req.headers["content-length"])

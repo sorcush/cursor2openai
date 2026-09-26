@@ -41,6 +41,7 @@ export const permissionsFileText = (paths: PlatformPaths): string => `${JSON.str
 
 const isInside = (child: string, parent: string): boolean => child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep)
 
+// SECURITY-REVIEW: file-system access on a configured path; symbolic links are rejected along the path.
 export const assertNoSymlinks = async (path: string): Promise<void> => {
   let current: string = sep
   for (const part of resolve(path).split(sep).filter(Boolean)) {
@@ -75,6 +76,7 @@ const writePermissionsFile = async (workspaceDir: string, text: string): Promise
   await rename(temp, join(folder, "cli.json"))
 }
 
+// SECURITY-REVIEW: file-system access on a configured path; denied folders are checked and owner/mode are verified.
 export const prepareWorkspace = async (input: { workspaceDir: string; paths: PlatformPaths; uid: number }): Promise<string> => {
   const workspace = resolve(input.workspaceDir)
   if (!isAbsolute(input.workspaceDir)) throw new StartupError("CURSOR2OPENAI_WORKSPACE_DIR must be an absolute path")
