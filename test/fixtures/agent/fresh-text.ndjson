@@ -1,0 +1,16 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/Users/Shared/cursor2openai-checks/resume","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","model":"Composer 2.5 Fast","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Remember the code word ORBIT-7. Reply only: OK"}]},"session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb"}
+{"type":"thinking","subtype":"delta","text":"I will remember the ","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455760043}
+{"type":"thinking","subtype":"delta","text":"code word ORBIT-7 and","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455760117}
+{"type":"thinking","subtype":"delta","text":" reply only with OK.","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455760219}
+{"type":"thinking","subtype":"delta","text":"\n\nI cannot invoke the","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455761655}
+{"type":"thinking","subtype":"delta","text":" hindsight skill in ","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455761655}
+{"type":"thinking","subtype":"delta","text":"ask mode because it ","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455761655}
+{"type":"thinking","subtype":"delta","text":"likely requires a write","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455761655}
+{"type":"thinking","subtype":"delta","text":" operation. I will simply","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455761655}
+{"type":"thinking","subtype":"delta","text":" remember ORBIT-7 for","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455761655}
+{"type":"thinking","subtype":"delta","text":" this conversation.","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455761655}
+{"type":"thinking","subtype":"completed","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455761656}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455761656}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb"}
+{"type":"result","subtype":"success","duration_ms":7601,"duration_api_ms":7601,"is_error":false,"result":"OK","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","request_id":"aedeb703-cfac-49a8-88a4-8ef855c0a824","usage":{"inputTokens":11760,"outputTokens":420,"cacheReadTokens":3904,"cacheWriteTokens":0}}

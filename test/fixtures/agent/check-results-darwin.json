@@ -1,0 +1,95 @@
+{
+  "cliVersion": "2026.09.23-86fc751",
+  "model": "composer-2.5-fast",
+  "results": [
+    {
+      "id": 1,
+      "name": "resume works from a new process",
+      "pass": true,
+      "details": {
+        "sessionId": "27f79f6f-c464-492b-87a5-7ce780d5cbcb",
+        "reply": "ORBIT-7",
+        "stderr": ""
+      }
+    },
+    {
+      "id": 7,
+      "name": "resume works after the workspace is recreated",
+      "pass": true,
+      "details": {
+        "reply": "ORBIT-7"
+      }
+    },
+    {
+      "id": 2,
+      "name": "ask mode can view an image in the workspace",
+      "pass": true,
+      "details": {
+        "reply": "red"
+      }
+    },
+    {
+      "id": 3,
+      "name": "token usage report",
+      "pass": true,
+      "details": {
+        "resultKeys": [
+          "type",
+          "subtype",
+          "duration_ms",
+          "duration_api_ms",
+          "is_error",
+          "result",
+          "session_id",
+          "request_id",
+          "usage"
+        ],
+        "freshUsage": {
+          "inputTokens": 11760,
+          "outputTokens": 420,
+          "cacheReadTokens": 3904,
+          "cacheWriteTokens": 0
+        },
+        "resumedUsage": {
+          "inputTokens": 146,
+          "outputTokens": 77,
+          "cacheReadTokens": 32256,
+          "cacheWriteTokens": 0
+        },
+        "suggestion": "resumed usage appears to include the earlier conversation: set CURSOR_USAGE_COVERS_CONVERSATION = true"
+      }
+    },
+    {
+      "id": 4,
+      "name": "error samples recorded",
+      "pass": true,
+      "details": {
+        "unknownModelExit": 1,
+        "badKeyExit": 1,
+        "statusWithoutLoginExit": 0
+      }
+    },
+    {
+      "id": 5,
+      "name": "agent runs with only the allowed environment variables",
+      "pass": true,
+      "details": {
+        "exit": 0,
+        "stderr": ""
+      }
+    },
+    {
+      "id": 6,
+      "name": "permissions file blocks Cursor's own tools and keeps screenshots readable",
+      "pass": true,
+      "details": {
+        "homeReadBlocked": true,
+        "shellBlocked": true,
+        "webFetchBlocked": true,
+        "mcpBlocked": true,
+        "absoluteWriteBlocked": true,
+        "screenshotReadable": true
+      }
+    }
+  ]
+}

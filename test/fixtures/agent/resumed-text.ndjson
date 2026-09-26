@@ -1,0 +1,9 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/Users/Shared/cursor2openai-checks/resume","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","model":"Composer 2.5 Fast","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"What code word did I ask you to remember? Reply with the code word only."}]},"session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb"}
+{"type":"thinking","subtype":"delta","text":"The code word is ORBIT-7.","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455776358}
+{"type":"thinking","subtype":"completed","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455776359}
+{"type":"thinking","subtype":"delta","text":"The code word is ORBIT-7.","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455777294}
+{"type":"thinking","subtype":"completed","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455777294}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ORBIT-7"}]},"session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","timestamp_ms":1790455777295}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ORBIT-7"}]},"session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb"}
+{"type":"result","subtype":"success","duration_ms":2587,"duration_api_ms":2587,"is_error":false,"result":"ORBIT-7","session_id":"27f79f6f-c464-492b-87a5-7ce780d5cbcb","request_id":"0b42feb2-1a3b-4366-8287-e25b2bc5d1e2","usage":{"inputTokens":146,"outputTokens":77,"cacheReadTokens":32256,"cacheWriteTokens":0}}
