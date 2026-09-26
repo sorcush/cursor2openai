@@ -64,6 +64,8 @@ export const readJsonBody = (req: IncomingMessage, limit: number): Promise<unkno
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
+const jsonContentType = (value: string): boolean => /^application\/json(\s*;|\s*$)/i.test(value.trim())
+
 type RouteContext = {
   path: string
   logMeta: (status: number, errorClass?: string) => void
@@ -94,7 +96,7 @@ export const createAdapterServer = (options: ServerOptions): AdapterServer => {
     }
     if (ctx.path !== "/v1/chat/completions") throw new AdapterError(404, "not_found", "Not found")
     if (req.method !== "POST") throw methodNotAllowed()
-    if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
+    if (!jsonContentType(req.headers["content-type"] ?? "")) {
       throw new AdapterError(400, "invalid_request_error", "Content-Type must be application/json")
     }
     const disconnect = new AbortController()

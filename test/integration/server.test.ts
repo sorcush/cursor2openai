@@ -56,6 +56,8 @@ test("rejects bad keys, CORS preflight, unknown paths, wrong methods, wrong cont
   assert.equal((await call("/v1/chat/completions", { headers: auth })).status, 405)
   assert.equal((await call("/v1/models", { method: "POST", headers: auth })).status, 405)
   assert.equal((await call("/v1/chat/completions", { method: "POST", headers: { ...auth, "content-type": "text/plain" }, body: "{}" })).status, 400)
+  assert.equal((await call("/v1/chat/completions", { method: "POST", headers: { ...auth, "content-type": "application/json-patch" }, body: "{}" })).status, 400)
+  assert.equal((await call("/v1/chat/completions", { method: "POST", headers: { ...auth, "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ messages: hi }) })).status, 200)
   const large = await call("/v1/chat/completions", { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ messages: [{ role: "user", content: "x".repeat(200) }] }) })
   assert.equal(large.status, 413)
   assert.equal(((await large.json()) as { error: { code: string } }).error.code, "request_too_large")
