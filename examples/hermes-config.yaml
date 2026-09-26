@@ -1,0 +1,23 @@
+# Add to your Hermes profile config.yaml. Put CURSOR2OPENAI_API_KEY in the profile's .env.
+providers:
+  cursor:
+    api: https://adapter.local:8787/v1
+    transport: chat_completions
+    key_env: CURSOR2OPENAI_API_KEY
+    default_model: composer-2.5
+    session_affinity_header: X-Cursor2openai-Conversation
+    # ssl_ca_cert: /path/to/self-signed-cert.pem
+
+model_overrides:
+  custom:
+    _default:
+      supports_reasoning: false
+      supports_vision: true
+  custom:cursor:
+    _default:
+      supports_reasoning: false
+      supports_vision: true
+
+model:
+  provider: custom:cursor
+  default: composer-2.5

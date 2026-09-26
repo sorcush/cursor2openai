@@ -1,0 +1,9 @@
+# Copy to ~/.cursor2openai/config.yaml. Environment variables override these values.
+host: 127.0.0.1
+port: 8787
+default_model: composer-2.5
+# tls_cert_file: /path/to/cert.pem
+# tls_key_file: /path/to/key.pem
+# workspace_dir: /var/lib/cursor2openai
+conversation_ttl_days: 30
+max_concurrent: 4
