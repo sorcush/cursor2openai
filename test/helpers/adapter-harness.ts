@@ -1,7 +1,9 @@
+import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { RequestQueue } from "../../src/concurrency.js"
 import { ConversationIndex } from "../../src/conversation/conversation-index.js"
 import { buildAgentEnv, runAgent, runAgentCommand } from "../../src/cursor/agent-runner.js"
+import { ModelFilter } from "../../src/cursor/model-filter.js"
 import { ModelCatalog, parseModelList } from "../../src/cursor/model-list.js"
 import { ensureWorkspaceReady, prepareWorkspace } from "../../src/cursor/workspace-permissions.js"
 import type { Logger, RequestLogEntry } from "../../src/log.js"
@@ -13,6 +15,7 @@ export const API_KEY = "test-key-0123456789abcdef0123456789"
 export type HarnessOptions = {
   dir: string
   scenarios?: FakeScenario[]
+  modelFilter?: string
   maxBodyBytes?: number
   maxConcurrent?: number
   maxQueued?: number
@@ -46,6 +49,10 @@ export const startAdapter = async (options: HarnessOptions): Promise<Harness> =>
     fetchList: async () => parseModelList((await runAgentCommand(agent.bin, ["--list-models"], agentEnv, 5000)).stdout),
   })
   await models.init()
+  const modelFilterFile = join(options.dir, "model-filter.txt")
+  if (options.modelFilter !== undefined) await writeFile(modelFilterFile, options.modelFilter)
+  const modelFilter = new ModelFilter({ file: modelFilterFile })
+  await modelFilter.init()
   const indexFile = join(options.dir, "data", "conversations.json")
   const index = await ConversationIndex.open({ filePath: indexFile, ttlMs: 86_400_000, maxEntries: 1000, batchDelayMs: 5 })
   const logs: RequestLogEntry[] = []
@@ -55,6 +62,7 @@ export const startAdapter = async (options: HarnessOptions): Promise<Harness> =>
     maxBodyBytes: options.maxBodyBytes ?? 1_000_000,
     queue: new RequestQueue({ maxConcurrent: options.maxConcurrent ?? 4, maxQueued: options.maxQueued ?? 16, queueTimeoutMs: 5000 }),
     models,
+    modelFilter,
     tls: options.tls,
     timeouts: options.timeouts,
     chat: {

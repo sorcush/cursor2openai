@@ -6,6 +6,7 @@ import { RequestQueue } from "./concurrency.js"
 import { isLoopback, loadConfig } from "./config.js"
 import { ConversationIndex } from "./conversation/conversation-index.js"
 import { buildAgentEnv, runAgent, runAgentCommand } from "./cursor/agent-runner.js"
+import { ModelFilter } from "./cursor/model-filter.js"
 import { ModelCatalog, parseModelList } from "./cursor/model-list.js"
 import { ensureWorkspaceReady } from "./cursor/workspace-permissions.js"
 import { createLogger } from "./log.js"
@@ -40,6 +41,8 @@ const main = async (): Promise<void> => {
     },
   })
   await models.init()
+  const modelFilter = new ModelFilter({ file: join(config.dataDir, "model-filter.txt"), onWarning: logger.warn })
+  await modelFilter.init()
 
   const index = await ConversationIndex.open({
     filePath: join(config.dataDir, "conversations.json"),
@@ -54,6 +57,7 @@ const main = async (): Promise<void> => {
     maxBodyBytes: config.maxBodyBytes,
     queue: new RequestQueue(config),
     models,
+    modelFilter,
     tls,
     chat: {
       defaultModel: config.defaultModel,

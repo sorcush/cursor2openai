@@ -72,6 +72,16 @@ test("lists the Cursor models", async () => {
   assert.equal(body.data[0].owned_by, "cursor")
 })
 
+test("hides filtered models from the list but still runs chat requests for them", async () => {
+  harness = await startAdapter({ dir: dir.path, modelFilter: ".*-fast\n", scenarios: [{ lines: replyLines("s1", "Hello") }] })
+  const response = await fetch(`${harness.url}/v1/models`, { headers: { authorization: `Bearer ${API_KEY}` } })
+  const body = (await response.json()) as { data: Array<{ id: string }> }
+  assert.deepEqual(body.data.map((model) => model.id), ["composer-2.5"])
+  const chat = await harness.post({ model: "composer-2.5-fast", messages: [{ role: "user", content: "Hi" }] })
+  assert.equal(chat.status, 200)
+  assert.equal(((await chat.json()) as { choices: Array<{ message: { content: string } }> }).choices[0].message.content, "Hello")
+})
+
 test("every request emits one metadata log line", async () => {
   harness = await startAdapter({ dir: dir.path, scenarios: [{ lines: replyLines("s1", "Hello") }] })
   assert.equal((await fetch(`${harness.url}/v1/models`, { headers: { authorization: "Bearer wrong" } })).status, 401)

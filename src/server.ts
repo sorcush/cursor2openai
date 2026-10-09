@@ -3,6 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http"
 import https from "node:https"
 import type { AddressInfo } from "node:net"
 import { QueueAbortedError, type RequestQueue } from "./concurrency.js"
+import type { ModelFilter } from "./cursor/model-filter.js"
 import type { ModelCatalog } from "./cursor/model-list.js"
 import { type ChatDeps, handleChatCompletions } from "./openai/chat-completions.js"
 import { AdapterError } from "./openai/errors.js"
@@ -13,6 +14,7 @@ export type ServerOptions = {
   maxBodyBytes: number
   queue: Pick<RequestQueue, "acquire" | "close">
   models: Pick<ModelCatalog, "has" | "list">
+  modelFilter?: Pick<ModelFilter, "apply">
   chat: Omit<ChatDeps, "models" | "trackRequest">
   tls?: { cert: Buffer; key: Buffer }
   timeouts?: { headersMs?: number; requestMs?: number; keepAliveMs?: number; checkIntervalMs?: number }
@@ -90,7 +92,8 @@ export const createAdapterServer = (options: ServerOptions): AdapterServer => {
     if (ctx.path === "/v1/models") {
       if (req.method !== "GET") throw methodNotAllowed()
       const created = Math.floor(Date.now() / 1000)
-      const ids = await options.models.list()
+      const all = await options.models.list()
+      const ids = options.modelFilter ? await options.modelFilter.apply(all) : all
       sendJson(res, 200, { object: "list", data: ids.map((id) => ({ id, object: "model", created, owned_by: "cursor" })) })
       ctx.logMeta(200)
       return
