@@ -14,6 +14,8 @@ const parsePatterns = (text: string, file: string): RegExp[] => {
     const line = raw.trim()
     if (line === "" || line.startsWith("#")) continue
     try {
+      // Checking the line on its own first stops a line like "a)|(b" from escaping the anchors.
+      new RegExp(line)
       patterns.push(new RegExp(`^(?:${line})$`, "i"))
     } catch (error) {
       throw new Error(`${file} line ${index + 1} is not a valid pattern: ${(error as Error).message}`)
@@ -56,9 +58,10 @@ export class ModelFilter {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`Cannot read ${this.options.file}: ${(error as Error).message}`)
       text = ""
     }
-    if (text === this.lastText) return
-    this.patterns = parsePatterns(text, this.options.file)
-    this.lastText = text
+    if (text !== this.lastText) {
+      this.patterns = parsePatterns(text, this.options.file)
+      this.lastText = text
+    }
     this.warnedText = undefined
   }
 }

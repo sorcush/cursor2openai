@@ -28,7 +28,7 @@ gemini-3(\.[1-7])?-.*
 kimi-k2.*
 
 # Variants: hide every "fast" and "xhigh" variant of any model, for example
-# gpt-5.6-sol-high-fast, claude-opus-5-5-xhigh and claude-opus-5-5-thinking-xhigh.
+# gpt-5.6-sol-high-fast, claude-opus-5-5-xhigh and claude-haiku-5-5-thinking-xhigh.
 .*-fast(-.*)?
 .*-xhigh(-.*)?
 

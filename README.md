@@ -58,7 +58,7 @@ Set these in `.env` (start from [`.env.example`](.env.example)) or in your shell
 
 The Cursor CLI offers many models. To hide the ones you never use from the model list, create `model-filter.txt` in the data folder (`~/.cursor2openai/` by default). See [`examples/model-filter.txt`](examples/model-filter.txt).
 
-- Write one regular expression per line. Empty lines and lines starting with `#` are ignored.
+- Write one regular expression per line. Empty lines and lines starting with `#` are ignored. A `#` after a pattern is not a comment: it becomes part of the pattern.
 - A pattern must match the whole model name, ignoring case. `.*gpt-4.*` hides every name containing `gpt-4`; `gpt-4` hides only a model named exactly `gpt-4`.
 - Hidden models only disappear from `/v1/models`. A request that names a hidden model still works.
 - The file is read again on every model list request, so edits apply without a restart.
