@@ -40,7 +40,7 @@ Set these in `.env` (start from [`.env.example`](.env.example)) or in your shell
 | `CURSOR2OPENAI_PORT` | `8787` | Listening port. |
 | `CURSOR2OPENAI_TLS_CERT_FILE`, `CURSOR2OPENAI_TLS_KEY_FILE` | none | Enable HTTPS. Required for a non-loopback address unless insecure HTTP is allowed. |
 | `CURSOR2OPENAI_ALLOW_INSECURE_HTTP` | `false` | Allow plain HTTP on a non-loopback address. |
-| `CURSOR2OPENAI_DATA_DIR` | `~/.cursor2openai` | Conversation index, model cache, config file. |
+| `CURSOR2OPENAI_DATA_DIR` | `~/.cursor2openai` | Conversation index, model cache, config file, model filter. |
 | `CURSOR2OPENAI_WORKSPACE_DIR` | macOS `/Users/Shared/cursor2openai`, Linux `/var/lib/cursor2openai` | Folder `agent` runs in. Outside your home folder, mode `0700`. |
 | `CURSOR2OPENAI_DEFAULT_MODEL` | `composer-2.5` | Model used when a request names none. |
 | `CURSOR2OPENAI_AGENT_BIN` | `agent` | Path to the Cursor CLI. |
@@ -53,6 +53,16 @@ Set these in `.env` (start from [`.env.example`](.env.example)) or in your shell
 | `CURSOR2OPENAI_MODEL_CACHE_MS` | `300000` | How long the model list is cached. |
 | `CURSOR2OPENAI_MAX_BODY_BYTES` | `20971520` | Request size limit. |
 | `CURSOR2OPENAI_DEBUG_LOG_AGENT_OUTPUT` | `false` | Log raw `agent` errors. They may contain prompt text. |
+
+## Hiding models
+
+The Cursor CLI offers many models. To hide the ones you never use from the model list, create `model-filter.txt` in the data folder (`~/.cursor2openai/` by default). See [`examples/model-filter.txt`](examples/model-filter.txt).
+
+- Write one regular expression per line. Empty lines and lines starting with `#` are ignored. A `#` after a pattern is not a comment: it becomes part of the pattern.
+- A pattern must match the whole model name, ignoring case. `.*gpt-4.*` hides every name containing `gpt-4`; `gpt-4` hides only a model named exactly `gpt-4`.
+- Hidden models only disappear from `/v1/models`. A request that names a hidden model still works.
+- The file is read again on every model list request, so edits apply without a restart.
+- An invalid pattern stops the adapter at startup, with the line number in the error. If you save an invalid pattern while the adapter runs, it logs a warning and keeps the last valid filter.
 
 ## Hermes configuration
 
